@@ -69,6 +69,13 @@
         "useProxy": false,
         "webhookUrl": ""
       },
+      "gotify": {
+        "enabled": false,
+        "useProxy": false,
+        "serverUrl": "",
+        "appToken": "",
+        "priority": 5
+      },
       "webhook": {
         "enabled": false,
         "useProxy": false,

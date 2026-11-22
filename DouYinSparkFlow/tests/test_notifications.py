@@ -38,6 +38,7 @@ def full_config(**channels):
         "telegram": {"enabled": False, "useProxy": True, "botToken": "", "chatId": ""},
         "dingtalk": {"enabled": False, "useProxy": False, "webhookUrl": "", "secret": ""},
         "wecom": {"enabled": False, "useProxy": False, "webhookUrl": ""},
+        "gotify": {"enabled": False, "useProxy": False, "serverUrl": "", "appToken": "", "priority": 5},
         "webhook": {"enabled": False, "useProxy": False, "url": "", "extraFields": {}},
     }
     for name, values in channels.items():
@@ -126,6 +127,30 @@ class ChannelTests(unittest.TestCase):
         self.assertTrue(ok)
         request = self.transport.requests[0]
         self.assertEqual({"msgtype": "text", "text": {"content": "【抖音火花】测试\n正文"}}, json.loads(request.content))
+
+    def test_gotify_posts_message_with_application_token_header(self):
+        channel = {
+            "useProxy": False,
+            "serverUrl": "https://push.example.com/gotify/?ignored=query",
+            "appToken": "APPSECRET",
+            "priority": 7,
+        }
+        ok, _ = notify.send_channel("gotify", channel, self.message)
+        self.assertTrue(ok)
+        request = self.transport.requests[0]
+        self.assertEqual("https://push.example.com/gotify/message", str(request.url))
+        self.assertEqual("APPSECRET", request.headers["X-Gotify-Key"])
+        self.assertEqual(
+            {"title": "【抖音火花】测试", "message": "正文", "priority": 7},
+            json.loads(request.content),
+        )
+
+    def test_gotify_rejects_invalid_priority(self):
+        channel = {"serverUrl": "http://gotify:80", "appToken": "TOKEN", "priority": 11}
+        ok, detail = notify.send_channel("gotify", channel, self.message)
+        self.assertFalse(ok)
+        self.assertIn("0 到 10", detail)
+        self.assertEqual([], self.transport.requests)
 
     def test_generic_webhook_carries_required_fields_and_extra_fields(self):
         channel = {
@@ -223,6 +248,7 @@ class ConfigAndRedactionTests(unittest.TestCase):
         self.assertEqual({"enabled": True, "useProxy": True, "botToken": "", "chatId": ""}, telegram)
         self.assertFalse(settings["channels"]["webhook"]["enabled"])
         self.assertEqual({}, settings["channels"]["webhook"]["extraFields"])
+        self.assertEqual(5, settings["channels"]["gotify"]["priority"])
         self.assertEqual([], notify.enabled_channel_names({}))
         self.assertEqual([], notify.enabled_channel_names({"enabled": False, "channels": {"wecom": {"enabled": True}}}))
 
@@ -268,18 +294,45 @@ class ConfigAndRedactionTests(unittest.TestCase):
         _, errors = notify.apply_form(stored, {"notify_dingtalk_webhookUrl": "ftp://bad"})
         self.assertTrue(any("http://" in item for item in errors))
 
+    def test_gotify_form_saves_priority_and_keeps_existing_token(self):
+        stored = full_config(gotify={"serverUrl": "https://push.example.com", "appToken": "STOREDTOKEN"})
+        form = {
+            "notify_enabled": "on",
+            "notify_gotify_enabled": "on",
+            "notify_gotify_serverUrl": "",
+            "notify_gotify_appToken": "",
+            "notify_gotify_priority": "8",
+        }
+        settings, errors = notify.apply_form(stored, form)
+        self.assertEqual([], errors)
+        gotify = settings["channels"]["gotify"]
+        self.assertTrue(gotify["enabled"])
+        self.assertEqual("STOREDTOKEN", gotify["appToken"])
+        self.assertEqual(8, gotify["priority"])
+
+        _, errors = notify.apply_form(stored, dict(form, notify_gotify_priority="high"))
+        self.assertIn("Gotify 的优先级必须是 0 到 10 的整数", errors)
+        _, errors = notify.apply_form(stored, dict(form, notify_gotify_serverUrl="ftp://bad"))
+        self.assertTrue(any("http://" in item for item in errors))
+
     def test_view_never_contains_raw_secrets(self):
         config = full_config(
             telegram={"enabled": True, "botToken": "123456:SECRETTOKENVALUE", "chatId": "42"},
+            gotify={"enabled": True, "serverUrl": "https://push.example.com/PRIVATE", "appToken": "GOTIFYSECRET"},
             webhook={"enabled": True, "url": "https://example.com/hook/SECRETPATH?token=ABCDEF"},
         )
         view = notify.notifications_view(config)
         rendered = json.dumps(view, ensure_ascii=False)
         self.assertNotIn("SECRETTOKENVALUE", rendered)
+        self.assertNotIn("GOTIFYSECRET", rendered)
+        self.assertNotIn("PRIVATE", rendered)
         self.assertNotIn("SECRETPATH", rendered)
         self.assertNotIn("ABCDEF", rendered)
         self.assertEqual("1234****", view["channels"]["telegram"]["masked"]["botToken"])
         self.assertEqual("https://example.com/****?****", view["channels"]["webhook"]["masked"]["url"])
+        self.assertEqual("GOTI****", view["channels"]["gotify"]["masked"]["appToken"])
+        self.assertEqual(5, view["channels"]["gotify"]["priority"])
+        self.assertTrue(view["channels"]["gotify"]["configured"])
         self.assertTrue(view["channels"]["telegram"]["configured"])
         self.assertFalse(view["channels"]["wecom"]["configured"])
 
@@ -625,6 +678,9 @@ class NotificationWebTests(unittest.TestCase):
         self.assertNotIn("SECRETTOKENVALUE", response.text)
         self.assertNotIn("123456:", response.text)
         self.assertIn('action="/settings/notifications/test"', response.text)
+        self.assertIn('name="notify_gotify_serverUrl"', response.text)
+        self.assertIn('name="notify_gotify_appToken"', response.text)
+        self.assertIn('name="notify_gotify_priority"', response.text)
 
     def test_non_admin_page_never_renders_notify_section(self):
         self._as(FRIEND)
@@ -690,6 +746,7 @@ class NotificationWebTests(unittest.TestCase):
         page = self.client.get("/settings", follow_redirects=False).text
         self.assertIn('name="notify_dingtalk_use_proxy" checked', page)
         self.assertIn('name="notify_wecom_use_proxy"', page)
+        self.assertIn('name="notify_gotify_use_proxy"', page)
         self.assertIn('name="notify_webhook_use_proxy"', page)
         with patch.object(app_module, "update_config", side_effect=self._fake_update_config):
             self.client.post(

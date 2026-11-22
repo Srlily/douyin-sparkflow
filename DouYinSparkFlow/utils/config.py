@@ -94,6 +94,13 @@ DEFAULT_CONFIG = {
                 "useProxy": False,
                 "webhookUrl": ""
             },
+            "gotify": {
+                "enabled": False,
+                "useProxy": False,
+                "serverUrl": "",
+                "appToken": "",
+                "priority": 5
+            },
             "webhook": {
                 "enabled": False,
                 "useProxy": False,

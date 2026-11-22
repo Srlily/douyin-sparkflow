@@ -197,7 +197,7 @@ node --test tests/test_protocol_sender_helpers.mjs
 | `friendListScan` | 好友列表扫描时限、空闲等待和滚动参数 |
 | `persistentBrowserProfiles` | 持久化 Playwright Profile 及 Cookie 同步策略 |
 | `browserSenderAccounts` | 强制使用浏览器发送的账号列表；公开模板默认为空 |
-| `notifications` | 运行结果推送（Telegram / 钉钉 / 企业微信 / 通用 Webhook），默认关闭 |
+| `notifications` | 运行结果推送（Telegram / 钉钉 / 企业微信 / Gotify / 通用 Webhook），默认关闭 |
 
 #### 运行结果推送（`notifications`）
 
@@ -206,6 +206,7 @@ node --test tests/test_protocol_sender_helpers.mjs
 - 去重与汇总状态保存在 `logs/notify_state.json`，重启后同一天不会重复推送。
 - 每个渠道单次请求，超时 10 秒，失败只写日志，不影响续火花任务的执行与运行报告。
 - `useProxy` 为 true 时经 `douyin_proxy_url`（默认 `http://proxy:7890`）发送，适用于服务器直连不可用的渠道（如 Telegram）。
+- Gotify 向 `<serverUrl>/message` 发送 JSON（`title`、`message`、`priority`），应用 Token 通过 `X-Gotify-Key` 请求头传递；在 Gotify 的 Apps 页面创建应用即可获取 Token。`serverUrl` 可包含反向代理路径，优先级范围为 0–10，默认 5。
 - 通用 Webhook 以 JSON POST 发送 `title`、`text`、`event`、`date`，可通过 `extraFields` 追加固定字段（不会覆盖上述四项）。
 
 ```json
@@ -215,6 +216,7 @@ node --test tests/test_protocol_sender_helpers.mjs
     "telegram": {"enabled": true, "useProxy": true, "botToken": "<BotToken>", "chatId": "<ChatId>"},
     "dingtalk": {"enabled": false, "useProxy": false, "webhookUrl": "", "secret": ""},
     "wecom": {"enabled": false, "useProxy": false, "webhookUrl": ""},
+    "gotify": {"enabled": false, "useProxy": false, "serverUrl": "", "appToken": "", "priority": 5},
     "webhook": {"enabled": false, "useProxy": false, "url": "", "extraFields": {}}
   }
 }
