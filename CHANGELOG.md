@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-22
+
+- Added Gotify as a native run-notification channel with configurable server URL, application token, priority, proxy support, masked settings, and test-message delivery.
+
 ## 2026-10-24
 
 - Added group-chat targets bound to conversation IDs (PR #45): the picker shows `name（full id）`; duplicate names, incomplete scans, missing bindings, or a changed target fail closed instead of sending. Group-list refresh is read-only and patrol now checks group targets by their bound IDs.

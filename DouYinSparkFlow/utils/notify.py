@@ -1,4 +1,4 @@
-"""Push channels for run notifications: Telegram, DingTalk, WeCom and a generic webhook.
+"""Push channels for run notifications: Telegram, DingTalk, WeCom, Gotify and a generic webhook.
 
 Each channel gets one attempt with a short timeout. Failures come back as
 (False, Chinese detail) and are logged with secrets redacted; nothing here
@@ -25,11 +25,12 @@ REQUEST_TIMEOUT_SECONDS = 10.0
 DEFAULT_PROXY_URL = "http://proxy:7890"
 MESSAGE_PREFIX = "【抖音火花】"
 
-CHANNEL_NAMES = ("telegram", "dingtalk", "wecom", "webhook")
+CHANNEL_NAMES = ("telegram", "dingtalk", "wecom", "gotify", "webhook")
 CHANNEL_LABELS = {
     "telegram": "Telegram Bot",
     "dingtalk": "钉钉机器人",
     "wecom": "企业微信机器人",
+    "gotify": "Gotify",
     "webhook": "通用 Webhook",
 }
 # Text fields the settings form may write, and which of them are secrets.
@@ -38,18 +39,21 @@ CHANNEL_FIELDS = {
     "telegram": {"botToken": "secret", "chatId": "text"},
     "dingtalk": {"webhookUrl": "url", "secret": "secret"},
     "wecom": {"webhookUrl": "url"},
+    "gotify": {"serverUrl": "url", "appToken": "secret", "priority": "priority"},
     "webhook": {"url": "url"},
 }
 SECRET_FIELDS = {
     "telegram": ("botToken",),
     "dingtalk": ("webhookUrl", "secret"),
     "wecom": ("webhookUrl",),
+    "gotify": ("serverUrl", "appToken"),
     "webhook": ("url",),
 }
 REQUIRED_FIELDS = {
     "telegram": ("botToken", "chatId"),
     "dingtalk": ("webhookUrl",),
     "wecom": ("webhookUrl",),
+    "gotify": ("serverUrl", "appToken"),
     "webhook": ("url",),
 }
 
@@ -79,6 +83,11 @@ def normalize_notifications(raw):
                 channel[key] = bool(value)
             elif isinstance(default, dict):
                 channel[key] = deepcopy(value) if isinstance(value, dict) else {}
+            elif isinstance(default, int):
+                try:
+                    channel[key] = int(value)
+                except (TypeError, ValueError):
+                    channel[key] = default
             else:
                 channel[key] = str(value or "").strip()
         channels[name] = channel
@@ -153,10 +162,10 @@ def _dingtalk_signed_url(url, secret, timestamp=None):
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
-def _require_http_url(url):
+def _require_http_url(url, label="Webhook 地址"):
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.netloc:
-        raise ValueError("Webhook 地址必须以 http:// 或 https:// 开头")
+        raise ValueError(f"{label}必须以 http:// 或 https:// 开头")
     return url
 
 
@@ -183,6 +192,21 @@ def _build_request(name, channel, message):
             raise ValueError("未配置 Webhook 地址")
         _require_http_url(url)
         return url, {"msgtype": "text", "text": {"content": content}}
+    if name == "gotify":
+        server_url = channel.get("serverUrl") or ""
+        token = channel.get("appToken") or ""
+        if not server_url or not token:
+            raise ValueError("未配置 Gotify 服务器地址或应用 Token")
+        _require_http_url(server_url, "Gotify 服务器地址")
+        try:
+            priority = int(channel.get("priority", 5))
+        except (TypeError, ValueError):
+            raise ValueError("Gotify 优先级必须是 0 到 10 的整数")
+        if not 0 <= priority <= 10:
+            raise ValueError("Gotify 优先级必须是 0 到 10 的整数")
+        parts = urlsplit(server_url)
+        url = urlunsplit((parts.scheme, parts.netloc, f"{parts.path.rstrip('/')}/message", "", ""))
+        return url, {"title": message["title"], "message": message["text"], "priority": priority}
     if name == "webhook":
         url = channel.get("url") or ""
         if not url:
@@ -251,8 +275,9 @@ def send_channel(name, channel, message):
     secrets = [channel.get(field) for field in SECRET_FIELDS.get(name, ())]
     try:
         url, payload = _build_request(name, channel, message)
+        headers = {"X-Gotify-Key": channel["appToken"]} if name == "gotify" else None
         with _client_factory(**_client_options(bool(channel.get("useProxy")))) as client:
-            response = client.post(url, json=payload)
+            response = client.post(url, json=payload, headers=headers)
         _check_response(name, response)
         return True, "发送成功"
     except Exception as exc:
@@ -311,6 +336,7 @@ def notifications_view(config):
             "enabled": channel["enabled"],
             "useProxy": channel["useProxy"],
             "chatId": channel.get("chatId", ""),
+            "priority": channel.get("priority", 5),
             "masked": masked,
             "configured": all(channel.get(field) for field in REQUIRED_FIELDS[name]),
         }
@@ -336,6 +362,17 @@ def apply_form(current, form):
             submitted = str(form.get(key, "") or "").strip()
             if kind == "text":
                 channel[field] = submitted
+                continue
+            if kind == "priority":
+                if not submitted:
+                    continue
+                try:
+                    channel[field] = int(submitted)
+                    if not 0 <= channel[field] <= 10:
+                        raise ValueError
+                except ValueError:
+                    channel[field] = DEFAULT_CONFIG["notifications"]["channels"][name][field]
+                    errors.append(f"{CHANNEL_LABELS[name]} 的优先级必须是 0 到 10 的整数")
                 continue
             if str(form.get(f"{key}_clear", "")) == "on":
                 channel[field] = ""
